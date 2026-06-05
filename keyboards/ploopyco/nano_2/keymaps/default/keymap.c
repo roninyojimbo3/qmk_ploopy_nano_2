@@ -18,118 +18,175 @@
  */
 #include QMK_KEYBOARD_H
 
-const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
-[0] = LAYOUT( QK_MOUSE_BUTTON_1 )
+enum custom_keycodes {
+    NANO_BTN = SAFE_RANGE
 };
 
-bool scrolling_mode = false;
+const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
+    [0] = LAYOUT(NANO_BTN)
+};
 
-int16_t scroll_accum_horizontal = 0;
-int16_t scroll_accum_vertical = 0;
+#define HOLD_TERM 220
+#define TAP_GAP   260
+#define SCROLL_THRESHOLD 150
+#define MEDIA_THRESHOLD 220
 
-int wiggle_count = 0;
-bool last_wiggle_direction = false;
-uint16_t last_wiggle_time = 0;
-uint16_t last_mode_switch_time = 0;
+static bool btn_down = false;
+static bool hold_active = false;
+static uint16_t press_timer = 0;
+static uint16_t last_tap_timer = 0;
+static uint8_t tap_count = 0;
 
-static void reset_wiggle_if_stale(void) {
-    if (timer_read() - last_wiggle_time > 150) {
-        wiggle_count = 0;
+static bool scroll_mode = false;
+static bool precision_mode = false;
+static bool media_mode = false;
+
+static int16_t scroll_x = 0;
+static int16_t scroll_y = 0;
+static int16_t media_x = 0;
+static int16_t media_y = 0;
+
+static void finish_taps(void) {
+    if (tap_count == 1) {
+        tap_code16(QK_MOUSE_BUTTON_1);
+    } else if (tap_count == 2) {
+        tap_code16(QK_MOUSE_BUTTON_2);
+    } else if (tap_count == 3) {
+        tap_code16(QK_MOUSE_BUTTON_3);
     }
+
+    tap_count = 0;
 }
 
-static void detect_right_wiggle(int16_t mouse_x_raw, int16_t mouse_y_raw) {
-    if (mouse_x_raw > 1 && mouse_y_raw < 3 && !last_wiggle_direction) {
-        wiggle_count++;
-        last_wiggle_time = timer_read();
-        last_wiggle_direction = !last_wiggle_direction;
+static void start_hold_action(void) {
+    hold_active = true;
+
+    if (tap_count == 0) {
+        register_code16(QK_MOUSE_BUTTON_1);   // Hold = drag
+    } else if (tap_count == 1) {
+        scroll_mode = true;                   // Tap-hold = scroll
+    } else if (tap_count == 2) {
+        precision_mode = true;                // Tap-tap-hold = precision
+    } else if (tap_count == 3) {
+        media_mode = true;                    // Tap-tap-tap-hold = media
     }
+
+    tap_count = 0;
 }
 
-static void detect_left_wiggle(int16_t mouse_x_raw, int16_t mouse_y_raw) {
-    if (mouse_x_raw < -1 && mouse_y_raw < 3 && last_wiggle_direction) {
-        wiggle_count++;
-        last_wiggle_time = timer_read();
-        last_wiggle_direction = !last_wiggle_direction;
+static void stop_hold_action(void) {
+    unregister_code16(QK_MOUSE_BUTTON_1);
+
+    scroll_mode = false;
+    precision_mode = false;
+    media_mode = false;
+    hold_active = false;
+
+    scroll_x = 0;
+    scroll_y = 0;
+    media_x = 0;
+    media_y = 0;
+}
+
+bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (keycode != NANO_BTN) {
+        return true;
     }
-}
 
-static void check_and_toggle_scroll(void) {
-    if (wiggle_count > 3) {
-        scrolling_mode = !scrolling_mode;
-        wiggle_count = 0;
-        last_wiggle_time = 0;
-        last_mode_switch_time = 0;
+    if (record->event.pressed) {
+        btn_down = true;
+        press_timer = timer_read();
+    } else {
+        btn_down = false;
+
+        if (hold_active) {
+            stop_hold_action();
+        } else {
+            tap_count++;
+            last_tap_timer = timer_read();
+        }
     }
+
+    return false;
 }
 
-static void accumulate_scroll(int16_t mouse_x_raw, int16_t mouse_y_raw) {
-    scroll_accum_horizontal += mouse_x_raw;
-    scroll_accum_vertical += mouse_y_raw;
-}
-
-static void process_horizontal_scroll(int16_t* scroll_value) {
-    if (scroll_accum_horizontal > 150) {
-         *scroll_value = 1;
-        scroll_accum_horizontal = 0;
-     } else if (scroll_accum_horizontal < -150) {
-         *scroll_value = -1;
-        scroll_accum_horizontal = 0;
+void matrix_scan_user(void) {
+    if (btn_down && !hold_active && timer_elapsed(press_timer) > HOLD_TERM) {
+        start_hold_action();
     }
-}
 
-static void process_vertical_scroll(int16_t* scroll_value) {
-    if (scroll_accum_vertical > 150) {
-         *scroll_value = -1;
-        scroll_accum_vertical = 0;
-     } else if (scroll_accum_vertical < -150) {
-         *scroll_value = 1;
-        scroll_accum_vertical = 0;
+    if (!btn_down && tap_count > 0 && timer_elapsed(last_tap_timer) > TAP_GAP) {
+        finish_taps();
     }
-}
-
-static void set_scrolling_mode_output(report_mouse_t* mouse_report) {
-    mouse_report->x = 0;
-    mouse_report->y = 0;
-}
-
-static void set_mouse_mode_output(report_mouse_t* mouse_report) {
-    mouse_report->h = 0;
-    mouse_report->v = 0;
-}
-
-static void set_scroll_output(report_mouse_t* mouse_report, int16_t h_scroll, int16_t v_scroll) {
-    mouse_report->h = h_scroll;
-    mouse_report->v = v_scroll;
 }
 
 report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
-    int16_t mouse_x_raw = mouse_report.x;
-    int16_t mouse_y_raw = mouse_report.y;
+    int16_t raw_x = mouse_report.x;
+    int16_t raw_y = mouse_report.y;
 
-    if (timer_read() - last_mode_switch_time > 250) {
-        reset_wiggle_if_stale();
-        detect_right_wiggle(mouse_x_raw, mouse_y_raw);
-        detect_left_wiggle(mouse_x_raw, mouse_y_raw);
-        check_and_toggle_scroll();
+    if (scroll_mode) {
+        scroll_x += raw_x;
+        scroll_y += raw_y;
+
+        mouse_report.x = 0;
+        mouse_report.y = 0;
+        mouse_report.h = 0;
+        mouse_report.v = 0;
+
+        if (scroll_x > SCROLL_THRESHOLD) {
+            mouse_report.h = 1;
+            scroll_x = 0;
+        } else if (scroll_x < -SCROLL_THRESHOLD) {
+            mouse_report.h = -1;
+            scroll_x = 0;
+        }
+
+        if (scroll_y > SCROLL_THRESHOLD) {
+            mouse_report.v = -1;
+            scroll_y = 0;
+        } else if (scroll_y < -SCROLL_THRESHOLD) {
+            mouse_report.v = 1;
+            scroll_y = 0;
+        }
     }
 
-    if (scrolling_mode) {
-        accumulate_scroll(mouse_x_raw, mouse_y_raw);
+    else if (precision_mode) {
+        mouse_report.x = raw_x / 3;
+        mouse_report.y = raw_y / 3;
+        mouse_report.h = 0;
+        mouse_report.v = 0;
+    }
 
-        int16_t h_scroll = 0;
-        int16_t v_scroll = 0;
+    else if (media_mode) {
+        media_x += raw_x;
+        media_y += raw_y;
 
-        process_horizontal_scroll(&h_scroll);
-        process_vertical_scroll(&v_scroll);
+        mouse_report.x = 0;
+        mouse_report.y = 0;
+        mouse_report.h = 0;
+        mouse_report.v = 0;
 
-        set_scroll_output(&mouse_report, h_scroll, v_scroll);
-        set_scrolling_mode_output(&mouse_report);
-    } else {
-        set_mouse_mode_output(&mouse_report);
+        if (media_y < -MEDIA_THRESHOLD) {
+            tap_code16(KC_VOLU);
+            media_y = 0;
+        } else if (media_y > MEDIA_THRESHOLD) {
+            tap_code16(KC_VOLD);
+            media_y = 0;
+        }
+
+        if (media_x > MEDIA_THRESHOLD) {
+            tap_code16(KC_MNXT);
+            media_x = 0;
+        } else if (media_x < -MEDIA_THRESHOLD) {
+            tap_code16(KC_MPRV);
+            media_x = 0;
+        }
+    }
+
+    else {
+        mouse_report.h = 0;
+        mouse_report.v = 0;
     }
 
     return mouse_report;
 }
-
-
