@@ -27,7 +27,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 #define HOLD_TERM 220
-#define TAP_GAP   260
+#define TAP_GAP   150
 #define SCROLL_THRESHOLD 150
 #define MEDIA_THRESHOLD 220
 
