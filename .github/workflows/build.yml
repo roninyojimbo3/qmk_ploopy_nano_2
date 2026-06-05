@@ -1,0 +1,30 @@
+name: Build Nano 2 Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --user qmk
+
+      - name: Build firmware
+        run: |
+          make ploopyco/nano_2/rev2_003:default
+
+      - name: Upload UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: ploopy-nano-2-firmware
+          path: .build/*.uf2
