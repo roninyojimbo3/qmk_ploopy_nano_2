@@ -36,4 +36,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ploopy-nano-2-firmware
-          path: .build/*.uf2
+          path: .build/ploopyco_nano_2_rev2_003_default.uf2
