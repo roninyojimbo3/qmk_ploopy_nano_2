@@ -10,20 +10,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Setup QMK
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi git python3-pip
+
+      - name: Install QMK
         run: |
           python3 -m pip install --user qmk
-          qmk setup -y
 
-      - name: Install QMK Dependencies
+      - name: Update submodules
         run: |
-          qmk doctor
+          git submodule update --init --recursive
 
       - name: Build firmware
         run: |
